@@ -1,0 +1,223 @@
+#!/bin/bash
+
+
+# Path for secret-log.
+mkdir -p "$(pwd)/.mole" 
+
+
+# Make note in MOLE_RC.
+MakeNote()
+{
+	if [ -z "$3" ]; then
+		echo "$(whoami) $(realpath $1) $(date +%Y-%m-%d_%H-%M-%S) -" >> "$2"
+	else
+		echo "$(whoami) $(realpath $1) $(date +%Y-%m-%d_%H-%M-%S) $3" >> "$2"
+	fi
+}
+
+# Get the right editor and use it to open the file.
+OpenFile()
+{	
+	if [ -z "$EDITOR" ]; then
+		if [ -z "$VISUAL" ]; then
+			EDITOR=vi
+		else
+			EDITOR="$VISUAL"
+		fi
+	fi
+	$EDITOR "$1"
+}
+
+# Information about how to use this script.
+PrintGuide()
+{
+	echo "Welcome, $(whoami)."
+	echo "mole -h: get this guide."
+	echo "mole [-g GROUP] FILE: open file and set the groups(s) for it."
+	echo "mole [-m] [FILTERS] [DIRECTORY]: open file from the directory, using filters."
+	echo "To be continued..."
+	return
+}
+
+
+#Here we check if MOLE_RC exists, and create it if not.
+if [ -z "$MOLE_RC" ]; then
+		echo "MOLE_RC IS EMPTY!"
+		exit
+fi
+if [ ! -f "$MOLE_RC" ]; then
+ 	mkdir -p "$(dirname "$MOLE_RC")"
+  	touch "$MOLE_RC"
+fi
+
+
+
+# Setting values for getops for it to work in differnt situations.
+if [ "$1" = "secret-log" ]; then
+OPTIND=2
+fi
+MOSTMODE=0
+
+# Getops() to get keys and parameters.
+while getopts ":hg:ma:b:" OPTION
+do
+	case $OPTION in
+		h)
+			PrintGuide
+			exit
+		;;
+		g)
+			GROUP=$OPTARG
+		;;
+		m)
+			MOSTMODE=1
+		;;
+		a)
+			AFTERDATE=$OPTARG
+		;;
+		b)
+			BEFOREDATE=$OPTARG
+		;;
+	esac
+done
+
+
+# Setting "zero "values for unset parametres for us to be able to use them.
+if [ -z "$AFTERDATE" ]; then
+	AFTERDATE=00-00-00_00-00-00
+fi
+
+if [ -z "$BEFOREDATE" ]; then
+	BEFOREDATE=5000-00-00_00-00-00
+fi
+
+if [ -z "$GROUP" ]; then
+	GROUP="-"
+fi
+
+ 
+
+# Shifting arguments after parcing the keys.
+if [ "$1" != "secret-log" ]; then
+	if [ "$1" != "list" ]; then
+		shift "$((OPTIND-1))"
+	fi
+fi
+
+
+
+# The main part starts here.
+# We use if-elif construction to get what the user wants to do.
+
+
+
+# If we are working with the file, we just open it and make note about it.
+if [ -f "$1" ]; then
+	MakeNote $1 $MOLE_RC $GROUP
+	OpenFile $1
+		
+
+
+# We are working with directory (or nothing is set, what means the directory where we are now),
+elif [ -d "$1" ] || [ -z "$1" ]; then
+	if [ -d "$1" ]; then
+		rp=$(realpath $1)
+	else
+		rp=$(pwd)
+	fi
+
+
+
+
+# Awk for better work with text information.
+	 a=` awk -v dir=$rp  -v mm=$MOSTMODE -v bd=$BEFOREDATE -v ad=$AFTERDATE '			
+	
+	BEGIN{
+		last_time = 0
+	}
+	{
+			dirlog=gensub("/*[^/]*/*$", "", 1, $2)
+			if(mm==1){
+				if(dir==dirlog)
+				{					
+					if($3>ad && $3<bd)
+					{
+						file_counts[$2]++
+					}				
+				}
+			}
+			else
+			{
+				if(dir==dirlog)
+				{
+					if ($3 > last_time) 
+					{ 
+						if ($3>ad && $3<bd)
+						{
+							last_time = $3  
+							last_file = $2
+						}
+					}
+				}
+			}
+    }
+		
+END{	
+	if(mm==1)
+	{
+		max_count = 0
+		max_file = ""
+
+		for (file in file_counts) 
+		{
+			if (file_counts[file] > max_count) 
+			{			
+				max_count = file_counts[file]
+				max_file = file
+			}
+		}
+		print max_file
+	}
+	else
+	{
+		print last_file
+	}	
+}' $MOLE_RC `
+MakeNote $a $MOLE_RC $GROUP
+OpenFile $a
+		  
+
+elif [ "$1" = "secret-log" ]; then
+	rp=$(realpath ${!#})
+
+	#Setting the adress for the secret-log
+	LOGADR="$(pwd)/.mole/log_$(whoami)_$(date +%Y-%m-%d_%H-%M-%S)"
+	touch $LOGADR
+	awk -v dir=$rp -v bd=$BEFOREDATE -v ad=$AFTERDATE -v logadr=$LOGADR '
+		BEGIN{ 
+			split(dir, dirs, ",")
+		}
+		{
+			dirlog=gensub("/*[^/]*/*$", "", 1, $2)
+
+			for (i in dirs)
+			{
+				if(dirs[i]==dirlog)
+				{
+					if($3>ad && $3<bd)
+					{
+						print $2 " " $3 >> logadr
+					}				
+				}
+			}
+					
+		}' $MOLE_RC
+	bzip2 $LOGADR
+else
+	echo "ERROR! WRONG ARGUMENTS/KEYS!"
+	exit
+fi
+
+
+
+
